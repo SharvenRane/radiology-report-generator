@@ -1,95 +1,66 @@
-# Radiology Report Generator
+# radiology-report-generator
 
-Automated radiology report generation from chest X-rays using vision-language models
+A small image to text model that takes a radiograph style image and generates a
+short impression. The architecture is the classic captioning recipe kept
+deliberately tiny: a convolutional encoder squeezes the image into one context
+vector, and a GRU decoder turns that vector into a sequence of tokens. Training
+uses teacher forcing, and inference uses greedy decoding.
 
-`radiology` `medical-ai` `report-generation` `nlp` `computer-vision`
+This repo is built around synthetic data so it runs anywhere on CPU in a few
+seconds with no downloads. The goal is a clean, tested reference for how an
+encoder and a decoder are wired together for sequence generation, not a clinical
+tool.
 
-## Overview
+## How it works
 
-This repository implements a complete pipeline for **radiology report generator**, covering
-data preprocessing, model training, evaluation, and deployment.
+The encoder is two convolution blocks followed by global average pooling and a
+linear projection, giving a single vector per image. The decoder is a GRU whose
+initial hidden state is that image vector. At each step the decoder embeds the
+previous token, advances the GRU, and projects to vocabulary logits.
 
-## Features
+During training we feed the ground truth previous token at every position, which
+is teacher forcing. The loss is cross entropy over the next token, with padding
+positions ignored. At inference the decoder feeds itself: it starts from the
+beginning of sequence token and takes its own argmax output as the next input,
+emitting a fixed number of tokens.
 
-- Clean, modular PyTorch implementation
-- Reproducible experiments with MLflow tracking
-- Comprehensive evaluation with standard benchmarks
-- ONNX export for production deployment
-- Detailed documentation and usage examples
+## Synthetic data
 
-## Installation
+`SyntheticReportDataset` builds image and caption pairs from a hidden class. Each
+class owns one image prototype and one fixed caption. A sample is the prototype
+plus a little noise, paired with that class caption wrapped in beginning and end
+of sequence markers. Because the mapping from image to caption is consistent, a
+correctly wired model can learn it, and the loss falling on a tiny set is real
+evidence that the gradient path runs end to end.
 
-```bash
-git clone https://github.com/YOUR_USERNAME/radiology-report-generator.git
-cd radiology-report-generator
-pip install -r requirements.txt
-```
-
-## Quick Start
-
-```python
-from src.model import Model
-from src.trainer import Trainer
-from src.config import Config
-
-config = Config.from_yaml("configs/default.yaml")
-model = Model(config)
-trainer = Trainer(model, config)
-trainer.train()
-```
-
-## Project Structure
+## Layout
 
 ```
-radiology-report-generator/
-├── src/
-│   ├── model.py        # Model architecture
-│   ├── dataset.py      # Data loading and preprocessing
-│   ├── trainer.py      # Training loop
-│   ├── evaluate.py     # Evaluation metrics
-│   └── utils.py        # Helper utilities
-├── configs/
-│   └── default.yaml    # Default configuration
-├── notebooks/
-│   └── exploration.ipynb
-├── tests/
-│   └── test_model.py
-├── requirements.txt
-└── README.md
+src/
+  data.py    synthetic dataset and special token ids
+  model.py   CNN encoder, GRU decoder, full ReportGenerator
+  train.py   teacher forcing loss and a short overfit loop
+tests/
+  test_shapes.py     forward shapes of encoder, decoder, full model
+  test_training.py   loss is finite and falls when overfitting
+  test_decoding.py   greedy decode length and caption recovery
 ```
 
-## Results
+## Running the tests
 
-| Model | Dataset | Metric | Score |
-|-------|---------|--------|-------|
-| Baseline | Standard | Primary | - |
-| Ours | Standard | Primary | - |
-
-## Usage
-
-```bash
-# Train
-python train.py --config configs/default.yaml
-
-# Evaluate
-python evaluate.py --checkpoint checkpoints/best.pth
-
-# Export to ONNX
-python export.py --checkpoint checkpoints/best.pth
+```
+python -m pytest tests/ -q
 ```
 
-## References
+The suite checks behavior rather than fixed numbers. It confirms the forward
+shapes line up, the teacher forcing loss drops sharply when overfitting a tiny
+consistent batch, greedy decoding returns a sequence of the requested length,
+and after overfitting the decoded tokens match the target caption. On a recent
+CPU run all eight tests passed in about three seconds.
 
-- Relevant papers and resources for radiology report generator
+## Notes
 
-## License
-
-MIT
-
-# update 1
-
-# update 4
-
-# update 10
-
-# update 12
+The model is intentionally small so tests stay fast and deterministic. Swapping
+the encoder for a pretrained backbone or the GRU for a transformer decoder would
+be the natural next step toward something closer to a real report generator, but
+the training and decoding contract stays the same.
